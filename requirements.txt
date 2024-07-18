@@ -1,0 +1,7 @@
+bart_py==2.0.0
+matplotlib==3.7.1
+numpy==1.23.5
+Pillow==10.3.0
+roipoly==0.5.4
+scipy==1.13.1
+skimage==0.0
