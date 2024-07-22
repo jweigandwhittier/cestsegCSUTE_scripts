@@ -6,6 +6,7 @@ The purpose of this code is to reconstruct and analyze preclinical cardiac CEST 
 ## Requirements
 
 ### Dependencies 
+* Scripts tested on Python 3.9.16
 * Dependencies listed in requirements.txt
 * A Berkeley Advanced Reconstruction Toolbox (BART) installation is required for reconstruction
   * Install the latest version of BART by following the instructions listed at: https://mrirecon.github.io/bart/installation.html
