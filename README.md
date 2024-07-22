@@ -21,7 +21,7 @@ The purpose of this code is to reconstruct and analyze preclinical cardiac CEST 
 ## Instructions
 Detailed instructions can be found in the instructions folder.
 
-### Note: Pixelwise mapping is not included in main script. Refer to /scripts/plot_maps.py for pixelwise mapping.
+#### Note: Pixelwise mapping is not included in main script. Refer to /scripts/plot_maps.py for pixelwise mapping.
 
 ## References
 Martin Uecker, Frank Ong, Jonathan I Tamir, Dara Bahri, Patrick Virtue, Joseph Y Cheng, Tao Zhang, and Michael Lustig. Berkeley Advanced Reconstruction Toolbox. Annual Meeting ISMRM, Toronto 2015, In Proc. Intl. Soc. Mag. Reson. Med. 23:2486 
