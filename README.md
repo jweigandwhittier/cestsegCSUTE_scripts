@@ -15,7 +15,9 @@ The purpose of this code is to reconstruct and analyze preclinical cardiac CEST 
 
   #### Suggested installation routes
   * [pip](https://pip.pypa.io/en/stable/)
+    * Use ```pip install -r /path/to/requirements.txt```
   * [Anaconda](https://www.anaconda.com/products/distribution)
+    * Use ```conda install --file /path/to/requirements.txt``` 
 
 
 ## Instructions
