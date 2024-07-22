@@ -1,6 +1,8 @@
 # cestsegCSUTE_scripts
 The purpose of this code is to reconstruct and analyze preclinical cardiac CEST data acquired using the method described in the manuscript "Ungated, plug-and-play preclinical cardiac CEST-MRI using radial FLASH with segmented saturation"
 
+![Segmentation preview](/instructions/img/roi.png)
+
 ## Requirements
 
 ### Dependencies 
