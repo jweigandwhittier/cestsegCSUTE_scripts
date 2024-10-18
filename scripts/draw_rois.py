@@ -32,7 +32,7 @@ def Process_Avg(Data):
     return Spectra
 
 def Process_PerPixel(Data):
-    M0 = np.squeeze(Data['M0'][0])
+    M0 = np.squeeze(Data['M0'])
     Imgs = Data['Cest'][0]
     Mask = Rois_Avg(M0)
     Spectra = []
@@ -41,7 +41,6 @@ def Process_PerPixel(Data):
     for i in range(np.size(Imgs, axis=2)):
         Image = Imgs[:,:,i]
         Image[~Mask] = 0 
-        Image /= M0
         Image = Image.flatten()[Image.flatten() != 0]
         Pixels.append(Image)
     Pixels = np.array(Pixels)
@@ -89,7 +88,7 @@ def process_aha_thermal_drift(data, savedir, save_as):
         pixels = np.array(pixels)
         spectrum = np.mean(pixels, axis=1)
         spectra[label] = spectrum
-    return mask, spectra
+    return mask, labeled_segments, spectra
     
 def Rois_Avg(M0):
     Roi_List = ['Epicardium', 'Endocardium']
@@ -290,3 +289,20 @@ def aha_segmentation(image, savedir, save_as):
         if user_input == 'yes':
             break
     return labeled_segments, mask, multiroi_named
+
+def aha_per_pixel(data, savedir, save_as):
+    m0 = np.squeeze(data['M0'])
+    imgs = data['Cest'][0]
+    labeled_segments, mask, rois = aha_segmentation(m0, savedir, save_as)
+    spectra = []
+    pixels = []
+    for i in range(np.size(imgs, axis=2)):
+        image = imgs[:,:,i]
+        image[~mask] = 0 
+        image = image.flatten()[image.flatten() != 0]
+        pixels.append(image)
+    pixels = np.array(pixels)
+    pixels = np.swapaxes(pixels, 0, 1)
+    spectra = pixels.tolist()
+    return mask, labeled_segments, spectra
+    

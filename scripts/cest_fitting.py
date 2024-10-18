@@ -7,9 +7,10 @@ Created on Tue Feb  6 11:08:05 2024
 """
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import interpolate
 from scipy.optimize import curve_fit
 from scipy.io import savemat
+from scipy.interpolate import CubicSpline
+
 
 ###Pre-correction###
 ##Starting points for curve fitting: amplitude, FWHM, peak center##
@@ -46,8 +47,8 @@ p0_amide = [0.05, 1.5, 3.5]
 ##Lower bounds for curve fitting##
 lb_water = [0.02, 0.01, -1e-6]
 lb_mt = [0.0, 30, -2.5]
-lb_noe = [0.0, 0.1, -4.5]
-lb_creatine = [0.0, 0.1, 1.6]
+lb_noe = [0.0, 0.2, -4.5]
+lb_creatine = [0.0, 0.2, 1.6]
 lb_amide = [0.0, 0.2, 3.2]
 ##Upper bounds for curve fitting##
 ub_water = [1, 10, 1e-6]
@@ -172,44 +173,42 @@ def two_step_aha(Offsets, Spectra):
         Fits[Segment] = {'Fit_Params':Fit_Parameters, 'Data_Dict':DataDict, 'Contrasts':Contrasts}
     return Fits
 
-def Two_Step(Offsets, Spectra):
-    n_seg = Spectra.shape[1]
+def two_step(Offsets, Spectra):
+    # n_seg = Spectra.shape[1]
+    Spectrum = np.squeeze(Spectra)
     n_interp = 1000
     Offsets_Corrected = np.zeros_like(Offsets)
     Fits = {}
-    for i in range(n_seg):
-        Spectrum = Spectra[:,i]
+    try:
+        # If Offsets[0] > 0, flip the Offsets and Spectrum
         if Offsets[0] > 0:
             Offsets = np.flip(Offsets)
             Spectrum = np.flip(Spectrum)
-        ##Fit for corrections##
+        # Fit for corrections
         Fit_1, _ = curve_fit(Step_1_Fit, Offsets, Spectrum, p0=p0_corr, bounds=(lb_corr, ub_corr))
-        ##Calculate water and MT fits from parameters##
+        # Calculate water and MT fits from parameters
         Water_Fit = Lorentzian(Offsets, Fit_1[0], Fit_1[1], Fit_1[2])
         Mt_Fit = Lorentzian(Offsets, Fit_1[3], Fit_1[4], Fit_1[5])
-        ##B0 correction##
-        Correction = Offsets[np.argmax(Water_Fit+Mt_Fit)]
+        # B0 correction
+        Correction = Offsets[np.argmax(Water_Fit + Mt_Fit)]
         Offsets_Corrected = Offsets - Correction
-        # Condition = (Offsets_Corrected <= Cutoffs[0]) | (Offsets_Corrected >= Cutoffs[3]) | \
-        #             ((Offsets_Corrected >= Cutoffs[1]) & (Offsets_Corrected <= Cutoffs[2]))
-        # Offsets_Cropped = Offsets_Corrected[Condition]
-        # Spectrum_Cropped = Spectrum[Condition]
-        ##Set up interpolated frequency axis
+        # Interpolated frequency axis
         Offsets_Interp = np.linspace(Offsets_Corrected[0], Offsets_Corrected[-1], n_interp)
+        # Fit again with corrected offsets
         Fit_1, _ = curve_fit(Step_1_Fit, Offsets_Corrected, Spectrum, p0=p0_1, bounds=(lb_1, ub_1))
-        ##Calculate water and MT fits from parameters##
+        # Calculate water and MT fits from parameters again
         Water_Fit = Lorentzian(Offsets_Interp, Fit_1[0], Fit_1[1], Fit_1[2])
         Mt_Fit = Lorentzian(Offsets_Interp, Fit_1[3], Fit_1[4], Fit_1[5])
-        ##Calculate background and Lorentzian difference##
+        # Calculate background and Lorentzian difference
         Background = Lorentzian(Offsets_Corrected, Fit_1[0], Fit_1[1], Fit_1[2]) + Lorentzian(Offsets_Corrected, Fit_1[3], Fit_1[4], Fit_1[5])
         Lorentzian_Difference = 1 - (Spectrum + Background)
-        ##Step 2##
+        # Step 2 fit
         Fit_2, _ = curve_fit(Step_2_Fit, Offsets_Corrected, Lorentzian_Difference, p0=p0_2, bounds=(lb_2, ub_2))
-        ##Calulate NOE, creatine, and amide fits from parameters##
+        # Calculate NOE, creatine, and amide fits from parameters
         Noe_Fit = Lorentzian(Offsets_Interp, Fit_2[0], Fit_2[1], Fit_2[2])
         Creatine_Fit = Lorentzian(Offsets_Interp, Fit_2[3], Fit_2[4], Fit_2[5])
         Amide_Fit = Lorentzian(Offsets_Interp, Fit_2[6], Fit_2[7], Fit_2[8])
-        ##Flip to match NMR convention##
+        # Flip to match NMR convention
         Offsets_Interp = np.flip(Offsets_Interp)
         Offsets_Corrected = np.flip(Offsets_Corrected)
         Offsets = np.flip(Offsets)
@@ -219,14 +218,22 @@ def Two_Step(Offsets, Spectra):
         Noe_Fit = np.flip(Noe_Fit)
         Creatine_Fit = np.flip(Creatine_Fit)
         Amide_Fit = np.flip(Amide_Fit)
-        Lorentzian_Difference = np.flip(Lorentzian_Difference)
-        ##Slap it in a dictionary##
+        Lorentzian_Difference = np.flip(Lorentzian_Difference)   
+        # Slap it in a dictionary
         Fit_Parameters = [Fit_1, Fit_2]
-        Contrasts = {'Water': 100*Fit_1[0], 'Mt': 100*Fit_1[3], 'Noe': 100*Fit_2[0], 
-                     'Creatine': 100*Fit_2[3], 'Amide': 100*Fit_2[6]}
-        DataDict = {'Zspec':Spectrum, 'Offsets':Offsets, 'Offsets_Corrected':Offsets_Corrected,
-                    'Offsets_Interp':Offsets_Interp,'Water_Fit':Water_Fit, 'Mt_Fit':Mt_Fit, 'Noe_Fit':Noe_Fit, 
-                    'Creatine_Fit':Creatine_Fit, 'Amide_Fit':Amide_Fit, 'Lorentzian_Difference':Lorentzian_Difference}
+        Contrasts = {'Water': 100 * Fit_1[0], 'Mt': 100 * Fit_1[3], 'Noe': 100 * Fit_2[0], 
+                     'Creatine': 100 * Fit_2[3], 'Amide': 100 * Fit_2[6]}
+        DataDict = {'Zspec': Spectrum, 'Offsets': Offsets, 'Offsets_Corrected': Offsets_Corrected,
+                    'Offsets_Interp': Offsets_Interp, 'Water_Fit': Water_Fit, 'Mt_Fit': Mt_Fit, 'Noe_Fit': Noe_Fit, 
+                    'Creatine_Fit': Creatine_Fit, 'Amide_Fit': Amide_Fit, 'Lorentzian_Difference': Lorentzian_Difference}
+    except RuntimeError:
+        # Fill outputs with zeros if curve fitting fails
+        Fit_Parameters = [np.zeros(6), np.zeros(9)]
+        Contrasts = {'Water': 0, 'Mt': 0, 'Noe': 0, 'Creatine': 0, 'Amide': 0}
+        DataDict = {'Zspec': Spectrum, 'Offsets': Offsets, 'Offsets_Corrected': Offsets_Corrected,
+                    'Offsets_Interp': Offsets_Interp, 'Water_Fit': np.zeros(n_interp), 'Mt_Fit': np.zeros(n_interp), 
+                    'Noe_Fit': np.zeros(n_interp), 'Creatine_Fit': np.zeros(n_interp), 
+                    'Amide_Fit': np.zeros(n_interp), 'Lorentzian_Difference': np.zeros(n_interp)}
     return DataDict, Contrasts, Fit_Parameters
 
 def One_Step_Phantom(Offsets, Spectra):
@@ -266,14 +273,14 @@ def One_Step_Phantom(Offsets, Spectra):
     return DataDict, Contrasts, Fit_Parameters
         
 
-def PerPixel(Offsets, Spectra):
+def per_pixel(Offsets, Spectra):
     Pixelwise = []
     for Spectrum in Spectra:
-        Data = Two_Step(Offsets, Spectrum)
+        Data = two_step(Offsets, Spectrum)
         Pixelwise.append(Data)
     return Pixelwise
 
-def Plot_Zspec(DataDict, Dir, Name):
+def plot_zspec(DataDict, Dir, Name):
     OffsetsInterp = DataDict['Offsets_Interp']
     Offsets = DataDict['Offsets_Corrected']
     Spectrum = DataDict['Zspec']
@@ -323,7 +330,7 @@ def plot_zspec_aha(Fits, Dir, Name):
         Amide_Fit = DataDict['Amide_Fit']
         Lorentzian_Difference = DataDict['Lorentzian_Difference']
         #Plots fits#
-        fig, ax = plt.subplots(1,1)
+        fig, ax = plt.subplots(1,1, figsize = (10,12))
         ax.plot(Offsets, Spectrum, '.', fillstyle='none', color='black', label = "Raw")
         ax.plot(OffsetsInterp, 1-Water_Fit, linewidth = 1.5, color = '#0072BD', label = "Water")
         ax.plot(OffsetsInterp, 1-Mt_Fit, linewidth = 1.5, color = '#EDB120', label = "MT")
@@ -331,28 +338,30 @@ def plot_zspec_aha(Fits, Dir, Name):
         ax.plot(OffsetsInterp, 1-Amide_Fit, linewidth = 1.5, color = '#7E2F8E', label = "Amide")
         ax.plot(OffsetsInterp, 1-Creatine_Fit, linewidth = 1.5, color = '#A2142F', label = "Creatine")
         ax.plot(OffsetsInterp, 1-(Water_Fit+Mt_Fit+Noe_Fit+Creatine_Fit+Amide_Fit), linewidth = 1.5, color = '#D95319', label = "Fit")
-        ax.legend()
+        ax.legend(fontsize=24)
         ax.invert_xaxis()
+        ax.tick_params(axis='both', which='major', labelsize=24)
         ax.set_ylim([0, 1])
-        ax.set_xlabel("Offset frequency (ppm)")
-        ax.set_ylabel("$S/S_0$")
-        fig.suptitle(Segment)
+        ax.set_xlabel("Offset frequency (ppm)", fontsize = 32, fontname = 'Arial')
+        ax.set_ylabel("$S/S_0$", fontsize = 32, fontname = 'Arial')
+        fig.suptitle(Segment, fontsize = 32, weight = 'bold', fontname = 'Arial')
         fig.savefig(Dir + "/" + Name + "_" + Segment + ".svg")
-        fig.savefig(Dir + "/" + Name + "_" + Segment + ".png")
+        fig.savefig(Dir + "/" + Name + "_" + Segment + ".tiff", dpi=300)
         plt.close(fig)
         #Plot Lorentzian difference#
-        fig, ax = plt.subplots(1,1)
+        fig, ax = plt.subplots(1,1, figsize=(12,12))
         ax.fill_between(Offsets, Lorentzian_Difference*100, 0, color='gray', alpha=0.5)
         ax.plot(OffsetsInterp, Noe_Fit*100, linewidth = 1.5, color = '#77AC30', label = "NOE")
         ax.plot(OffsetsInterp, Amide_Fit*100, linewidth = 1.5, color = '#7E2F8E', label = "Amide")
         ax.plot(OffsetsInterp, Creatine_Fit*100, linewidth = 1.5, color = '#A2142F', label = "Creatine")
-        ax.legend()
+        ax.legend(fontsize = 24)
         ax.invert_xaxis()
-        ax.set_xlabel("Offset frequency (ppm)")
-        ax.set_ylabel("CEST Contrast (%)")
-        fig.suptitle(Segment)
+        ax.set_xlabel("Offset frequency (ppm)", fontsize = 32, fontname = 'Arial')
+        ax.set_ylabel("CEST Contrast (%)", fontsize = 32, fontname = 'Arial')
+        ax.tick_params(axis='both', which='major', labelsize=24)
+        fig.suptitle(Segment, fontsize = 32, weight = 'bold', fontname = 'Arial')
         fig.savefig(Dir + "/" + Name + "_" + Segment + "_Lorentzian_Dif.svg")
-        fig.savefig(Dir + "/" + Name + "_" + Segment + "_Lorentzian_Dif.png")
+        fig.savefig(Dir + "/" + Name + "_" + Segment + "_Lorentzian_Dif.tiff", dpi = 300)
         plt.close(fig)
         
 def Plot_Zspec_Phantom(DataDict, Dir, Name):
@@ -381,3 +390,24 @@ def riccian_noise_correction(spectrum, offsets):
     for i in range(np.size(spectrum)):
         spectrum[i] = (spectrum[i] - noise)/(1 - noise)
     return spectrum
+
+def wassr(offsets, spectra):
+    pixelwise = []
+    n_interp = 1000  # Number of points for interpolation
+    for spectrum in spectra:
+        if offsets[0] > 0:
+            offsets = np.flip(offsets)
+            spectrum = np.flip(spectrum)
+        # Interpolate offsets and spectrum using cubic spline
+        cubic_spline = CubicSpline(offsets, spectrum)
+        offsets_interp = np.linspace(offsets[0], offsets[-1], n_interp)
+        spectrum_interp = cubic_spline(offsets_interp)
+        # Fit for corrections
+        Fit_1, _ = curve_fit(Step_1_Fit, offsets_interp, spectrum_interp, p0=p0_corr, bounds=(lb_corr, ub_corr))
+        # Calculate water and MT fits from parameters
+        Water_Fit = Lorentzian(offsets_interp, Fit_1[0], Fit_1[1], Fit_1[2])
+        Mt_Fit = Lorentzian(offsets_interp, Fit_1[3], Fit_1[4], Fit_1[5])
+        # B0 correction: find offset corresponding to the peak
+        b0_shift = offsets_interp[np.argmax(Water_Fit + Mt_Fit)]
+        pixelwise.append(b0_shift)
+    return pixelwise

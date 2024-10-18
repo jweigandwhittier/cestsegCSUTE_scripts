@@ -91,7 +91,7 @@ def load_study_bart(exps, directory, undersample, segmented):
     exps = bulk_load(exps, directory)
     for exp, data in exps.items():
         imgs = []
-        offsets = np.round(data.method["Cest_Offsets"] / data.method["PVM_FrqWork"][0], 1)
+        offsets = np.round(data.method["Cest_Offsets"] / data.method["PVM_FrqWork"][0], 2)
         if exp == 'M0':
             offsets = [offsets]
         traj = data.traj
@@ -189,25 +189,33 @@ def thermal_drift(data):
     ref_index = np.where(offsets > THRESHOLD_PPM)[0]
     # Apply normalization
     m0 = images[:,:,ref_index]
-    step = ref_index[1]-1
     offsets = np.delete(offsets, ref_index)
     images = np.delete(images, ref_index, axis=2)
-    ref_offsets = np.concatenate(([offsets[0]], offsets[step-1::step], [offsets[-1]]))
-
-    matrix = np.size(images, 0)
-    grid_index = np.arange(0,matrix)
-
-    points = (grid_index,grid_index,ref_offsets)
-    xi, yi, fi = np.meshgrid(grid_index, grid_index, offsets, indexing='ij')
-    values = np.stack((xi, yi, fi), axis=-1)
-
-    m0_interp = interpn(points, m0, values)
-    images = np.nan_to_num(images/m0_interp)
     
-    proc_data = {
+    if np.size(ref_index) > 1:
+        step = ref_index[1]-1
+        ref_offsets = np.concatenate(([offsets[0]], offsets[step-1::step], [offsets[-1]]))
+
+        matrix = np.size(images, 0)
+        grid_index = np.arange(0,matrix)
+
+        points = (grid_index,grid_index,ref_offsets)
+        xi, yi, fi = np.meshgrid(grid_index, grid_index, offsets, indexing='ij')
+        values = np.stack((xi, yi, fi), axis=-1)
+
+        m0_interp = interpn(points, m0, values)
+        images = np.nan_to_num(images/m0_interp)
+    
+        proc_data = {
+            'Cest': (images, offsets),
+            'M0': m0[:, :, 0],
+            'M0_Interp': m0_interp
+            }
+    else:
+        images = np.nan_to_num(images/m0)
+        proc_data = {
         'Cest': (images, offsets),
-        'M0': m0[:, :, 0],
-        'M0_Interp': m0_interp
+        'M0': m0[:, :, 0]
         }
     return proc_data  
 
