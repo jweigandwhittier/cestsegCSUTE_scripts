@@ -6,7 +6,9 @@ Created on Tue Feb  6 11:08:05 2024
 @author: jonah
 """
 import numpy as np
+import time
 import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error
 from scipy.optimize import curve_fit
 from scipy.io import savemat
 from scipy.interpolate import CubicSpline
@@ -47,9 +49,9 @@ p0_amide = [0.05, 1.5, 3.5]
 ##Lower bounds for curve fitting##
 lb_water = [0.02, 0.01, -1e-6]
 lb_mt = [0.0, 30, -2.5]
-lb_noe = [0.0, 0.2, -4.5]
-lb_creatine = [0.0, 0.2, 1.6]
-lb_amide = [0.0, 0.2, 3.2]
+lb_noe = [0.0, 0.5, -4.5]
+lb_creatine = [0.0, 0.5, 1.6]
+lb_amide = [0.0, 0.5, 3.2]
 ##Upper bounds for curve fitting##
 ub_water = [1, 10, 1e-6]
 ub_mt = [0.5, 60, 0]
@@ -116,7 +118,9 @@ def Water_Fit_Correction(x, *fit_parameters):
     return Fit
 
 def two_step_aha(Offsets, Spectra):
-    n_interp = 1000
+    start = time.time()
+    n_interp = 4000
+    Offsets_Interp = np.linspace(Offsets[0], Offsets[-1], n_interp)
     Offsets_Corrected = np.zeros_like(Offsets)
     Fits = {}
     for Segment, Spectrum in Spectra.items():
@@ -135,6 +139,8 @@ def two_step_aha(Offsets, Spectra):
         # Spectrum = riccian_noise_correction(Spectrum, Offsets_Corrected)
         Condition = (Offsets_Corrected <= Cutoffs[0]) | (Offsets_Corrected >= Cutoffs[3]) | \
                     ((Offsets_Corrected >= Cutoffs[1]) & (Offsets_Corrected <= Cutoffs[2]))
+        Condition_RMSE = ((Offsets_Corrected <= -1.4) & (Offsets_Corrected >= -4)) | \
+                    ((Offsets_Corrected >= 1.4) & (Offsets_Corrected <= 4))
         Offsets_Cropped = Offsets_Corrected[Condition]
         Spectrum_Cropped = Spectrum[Condition]
         ##Set up interpolated frequency axis
@@ -146,12 +152,27 @@ def two_step_aha(Offsets, Spectra):
         ##Calculate background and Lorentzian difference##
         Background = Lorentzian(Offsets_Corrected, Fit_1[0], Fit_1[1], Fit_1[2]) + Lorentzian(Offsets_Corrected, Fit_1[3], Fit_1[4], Fit_1[5])
         Lorentzian_Difference = 1 - (Spectrum + Background)
+        Step_1_Fit_Values = Step_1_Fit(Offsets_Corrected, *Fit_1)
+        ##Get RMSE and residuals
+        Step_1_Fit_Values = Step_1_Fit(Offsets_Corrected, *Fit_1)
+        Step_1_Residuals = Spectrum - Step_1_Fit_Values
+        Step_1_RMSE = np.sqrt(mean_squared_error(Spectrum, Step_1_Fit_Values))
         ##Step 2##
         Fit_2, _ = curve_fit(Step_2_Fit, Offsets_Corrected, Lorentzian_Difference, p0=p0_2, bounds=(lb_2, ub_2), **options)
         ##Calulate NOE, creatine, and amide fits from parameters##
         Noe_Fit = Lorentzian(Offsets_Interp, Fit_2[0], Fit_2[1], Fit_2[2])
         Creatine_Fit = Lorentzian(Offsets_Interp, Fit_2[3], Fit_2[4], Fit_2[5])
         Amide_Fit = Lorentzian(Offsets_Interp, Fit_2[6], Fit_2[7], Fit_2[8])
+        ##Get RMSE and residuals
+        Step_2_Fit_Values = Step_2_Fit(Offsets_Corrected, *Fit_2)
+        Step_2_Residuals = Lorentzian_Difference - Step_2_Fit_Values
+        Step_2_RMSE = np.sqrt(mean_squared_error(Lorentzian_Difference, Step_2_Fit_Values))
+        ##Calculate total fit and RMSE in specified regions
+        Total_Fit = Step_1_Fit_Values - Step_2_Fit_Values
+        Spectrum_Region = Spectrum[Condition_RMSE]
+        Total_Fit_Region = Total_Fit[Condition_RMSE]
+        Residuals = Spectrum_Region - Total_Fit_Region
+        RMSE = np.sqrt(mean_squared_error(Spectrum_Region, Total_Fit_Region))
         ##Flip to match NMR convention##
         Offsets_Interp = np.flip(Offsets_Interp)
         Offsets_Corrected = np.flip(Offsets_Corrected)
@@ -163,6 +184,9 @@ def two_step_aha(Offsets, Spectra):
         Creatine_Fit = np.flip(Creatine_Fit)
         Amide_Fit = np.flip(Amide_Fit)
         Lorentzian_Difference = np.flip(Lorentzian_Difference)
+        ##Residuals and RMSE dictionary
+        # All_Residuals = {'Step_1':Step_1_Residuals, 'Step_2':Step_2_Residuals, 'Total': Residuals}
+        # All_RMSE = {'Step_1':Step_1_RMSE, 'Step_2':Step_2_RMSE, 'Total': RMSE}
         ##Slap it in a dictionary##
         Fit_Parameters = [Fit_1, Fit_2]
         Contrasts = {'Water': 100*Fit_1[0], 'Mt': 100*Fit_1[3], 'Noe': 100*Fit_2[0], 
@@ -170,7 +194,10 @@ def two_step_aha(Offsets, Spectra):
         DataDict = {'Zspec':Spectrum, 'Offsets':Offsets, 'Offsets_Corrected':Offsets_Corrected,
                     'Offsets_Interp':Offsets_Interp,'Water_Fit':Water_Fit, 'Mt_Fit':Mt_Fit, 'Noe_Fit':Noe_Fit, 
                     'Creatine_Fit':Creatine_Fit, 'Amide_Fit':Amide_Fit, 'Lorentzian_Difference':Lorentzian_Difference} 
-        Fits[Segment] = {'Fit_Params':Fit_Parameters, 'Data_Dict':DataDict, 'Contrasts':Contrasts}
+        Fits[Segment] = {'Fit_Params':Fit_Parameters, 'Data_Dict':DataDict, 'Contrasts':Contrasts, 'Residuals':Residuals, 'RMSE':RMSE}
+    end = time.time()
+    total_time = end - start
+    print(f"Time taken for fitting: {total_time:.2f} seconds")
     return Fits
 
 def two_step(Offsets, Spectra):
@@ -218,7 +245,7 @@ def two_step(Offsets, Spectra):
         Noe_Fit = np.flip(Noe_Fit)
         Creatine_Fit = np.flip(Creatine_Fit)
         Amide_Fit = np.flip(Amide_Fit)
-        Lorentzian_Difference = np.flip(Lorentzian_Difference)   
+        Lorentzian_Difference = np.flip(Lorentzian_Difference)
         # Slap it in a dictionary
         Fit_Parameters = [Fit_1, Fit_2]
         Contrasts = {'Water': 100 * Fit_1[0], 'Mt': 100 * Fit_1[3], 'Noe': 100 * Fit_2[0], 
@@ -290,32 +317,46 @@ def plot_zspec(DataDict, Dir, Name):
     Creatine_Fit = DataDict['Creatine_Fit']
     Amide_Fit = DataDict['Amide_Fit']
     Lorentzian_Difference = DataDict['Lorentzian_Difference']
-    #Plots fits#
-    fig, ax = plt.subplots(1,1)
-    ax.plot(Offsets, Spectrum, '.', fillstyle='none', color='black', label = "Raw")
-    ax.plot(OffsetsInterp, 1-Water_Fit, linewidth = 1.5, color = '#0072BD', label = "Water")
-    ax.plot(OffsetsInterp, 1-Mt_Fit, linewidth = 1.5, color = '#EDB120', label = "MT")
-    ax.plot(OffsetsInterp, 1-Noe_Fit, linewidth = 1.5, color = '#77AC30', label = "NOE")
-    ax.plot(OffsetsInterp, 1-Amide_Fit, linewidth = 1.5, color = '#7E2F8E', label = "Amide")
-    ax.plot(OffsetsInterp, 1-Creatine_Fit, linewidth = 1.5, color = '#A2142F', label = "Creatine")
-    ax.plot(OffsetsInterp, 1-(Water_Fit+Mt_Fit+Noe_Fit+Creatine_Fit+Amide_Fit), linewidth = 1.5, color = '#D95319', label = "Fit")
-    ax.legend()
+    # Plots fits
+    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+    ax.plot(Offsets, Spectrum, '.', markersize=15, fillstyle='none', color='black', label="Raw")  # Increased marker size
+    ax.plot(OffsetsInterp, 1-Water_Fit, linewidth=4, color='#0072BD', label="Water")  # Increased linewidth
+    ax.plot(OffsetsInterp, 1-Mt_Fit, linewidth=4, color='#EDB120', label="MT")  # Increased linewidth
+    ax.plot(OffsetsInterp, 1-Noe_Fit, linewidth=4, color='#77AC30', label="NOE")  # Increased linewidth
+    ax.plot(OffsetsInterp, 1-Amide_Fit, linewidth=4, color='#7E2F8E', label="Amide")  # Increased linewidth
+    ax.plot(OffsetsInterp, 1-Creatine_Fit, linewidth=4, color='#A2142F', label="Creatine")  # Increased linewidth
+    ax.plot(OffsetsInterp, 1-(Water_Fit+Mt_Fit+Noe_Fit+Creatine_Fit+Amide_Fit), linewidth=4, color='#D95319', label="Fit")  # Increased linewidth
+    
+    ax.legend(fontsize=24)
     ax.invert_xaxis()
+    ax.tick_params(axis='both', which='major', labelsize=24)
     ax.set_ylim([0, 1])
-    ax.set_xlabel("Offset frequency (ppm)")
-    ax.set_ylabel("$S/S_0$")
+    ax.set_xlabel("Offset frequency (ppm)", fontsize=32, fontname='Arial')
+    ax.set_ylabel("$S/S_0$", fontsize=32, fontname='Arial')
+    
+    plt.grid(False)
     fig.savefig(Dir + "/" + Name + ".svg")
-    #Plot Lorentzian difference#
-    fig, ax = plt.subplots(1,1)
+    fig.savefig(Dir + "/" + Name + ".tiff", dpi=300)
+    plt.close(fig)
+    
+    # Plot Lorentzian difference
+    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
     ax.fill_between(Offsets, Lorentzian_Difference*100, 0, color='gray', alpha=0.5)
-    ax.plot(OffsetsInterp, Noe_Fit*100, linewidth = 1.5, color = '#77AC30', label = "NOE")
-    ax.plot(OffsetsInterp, Amide_Fit*100, linewidth = 1.5, color = '#7E2F8E', label = "Amide")
-    ax.plot(OffsetsInterp, Creatine_Fit*100, linewidth = 1.5, color = '#A2142F', label = "Creatine")
-    ax.legend()
+    ax.plot(OffsetsInterp, Noe_Fit*100, linewidth=4, color='#77AC30', label="NOE")  # Increased linewidth
+    ax.plot(OffsetsInterp, Amide_Fit*100, linewidth=4, color='#7E2F8E', label="Amide")  # Increased linewidth
+    ax.plot(OffsetsInterp, Creatine_Fit*100, linewidth=4, color='#A2142F', label="Creatine")  # Increased linewidth
+    
+    ax.legend(fontsize=24)
     ax.invert_xaxis()
-    ax.set_xlabel("Offset frequency (ppm)")
-    ax.set_ylabel("CEST Contrast (%)")
+    ax.set_xlabel("Offset frequency (ppm)", fontsize=32, fontname='Arial')
+    ax.set_ylabel("CEST Contrast (%)", fontsize=32, fontname='Arial')
+    ax.tick_params(axis='both', which='major', labelsize=24)
+    
+    plt.grid(False)
     fig.savefig(Dir + "/" + Name + "_Lorentzian_Dif.svg")
+    fig.savefig(Dir + "/" + Name + "_Lorentzian_Dif.tiff", dpi = 300)
+    plt.close(fig)
+        
     
 def plot_zspec_aha(Fits, Dir, Name):
     for Segment, Fit in Fits.items():
@@ -329,37 +370,45 @@ def plot_zspec_aha(Fits, Dir, Name):
         Creatine_Fit = DataDict['Creatine_Fit']
         Amide_Fit = DataDict['Amide_Fit']
         Lorentzian_Difference = DataDict['Lorentzian_Difference']
-        #Plots fits#
-        fig, ax = plt.subplots(1,1, figsize = (10,12))
-        ax.plot(Offsets, Spectrum, '.', fillstyle='none', color='black', label = "Raw")
-        ax.plot(OffsetsInterp, 1-Water_Fit, linewidth = 1.5, color = '#0072BD', label = "Water")
-        ax.plot(OffsetsInterp, 1-Mt_Fit, linewidth = 1.5, color = '#EDB120', label = "MT")
-        ax.plot(OffsetsInterp, 1-Noe_Fit, linewidth = 1.5, color = '#77AC30', label = "NOE")
-        ax.plot(OffsetsInterp, 1-Amide_Fit, linewidth = 1.5, color = '#7E2F8E', label = "Amide")
-        ax.plot(OffsetsInterp, 1-Creatine_Fit, linewidth = 1.5, color = '#A2142F', label = "Creatine")
-        ax.plot(OffsetsInterp, 1-(Water_Fit+Mt_Fit+Noe_Fit+Creatine_Fit+Amide_Fit), linewidth = 1.5, color = '#D95319', label = "Fit")
+        
+        # Plots fits
+        fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+        ax.plot(Offsets, Spectrum, '.', markersize=15, fillstyle='none', color='black', label="Raw")  # Increased marker size
+        ax.plot(OffsetsInterp, 1-Water_Fit, linewidth=4, color='#0072BD', label="Water")  # Increased linewidth
+        ax.plot(OffsetsInterp, 1-Mt_Fit, linewidth=4, color='#EDB120', label="MT")  # Increased linewidth
+        ax.plot(OffsetsInterp, 1-Noe_Fit, linewidth=4, color='#77AC30', label="NOE")  # Increased linewidth
+        ax.plot(OffsetsInterp, 1-Amide_Fit, linewidth=4, color='#7E2F8E', label="Amide")  # Increased linewidth
+        ax.plot(OffsetsInterp, 1-Creatine_Fit, linewidth=4, color='#A2142F', label="Creatine")  # Increased linewidth
+        ax.plot(OffsetsInterp, 1-(Water_Fit+Mt_Fit+Noe_Fit+Creatine_Fit+Amide_Fit), linewidth=4, color='#D95319', label="Fit")  # Increased linewidth
+        
         ax.legend(fontsize=24)
         ax.invert_xaxis()
         ax.tick_params(axis='both', which='major', labelsize=24)
         ax.set_ylim([0, 1])
-        ax.set_xlabel("Offset frequency (ppm)", fontsize = 32, fontname = 'Arial')
-        ax.set_ylabel("$S/S_0$", fontsize = 32, fontname = 'Arial')
-        fig.suptitle(Segment, fontsize = 32, weight = 'bold', fontname = 'Arial')
+        ax.set_xlabel("Offset frequency (ppm)", fontsize=32, fontname='Arial')
+        ax.set_ylabel("$S/S_0$", fontsize=32, fontname='Arial')
+        fig.suptitle(Segment, fontsize=32, weight='bold', fontname='Arial')
+        
+        plt.grid(False)
         fig.savefig(Dir + "/" + Name + "_" + Segment + ".svg")
         fig.savefig(Dir + "/" + Name + "_" + Segment + ".tiff", dpi=300)
         plt.close(fig)
-        #Plot Lorentzian difference#
-        fig, ax = plt.subplots(1,1, figsize=(12,12))
+        
+        # Plot Lorentzian difference
+        fig, ax = plt.subplots(1, 1, figsize=(12, 10))
         ax.fill_between(Offsets, Lorentzian_Difference*100, 0, color='gray', alpha=0.5)
-        ax.plot(OffsetsInterp, Noe_Fit*100, linewidth = 1.5, color = '#77AC30', label = "NOE")
-        ax.plot(OffsetsInterp, Amide_Fit*100, linewidth = 1.5, color = '#7E2F8E', label = "Amide")
-        ax.plot(OffsetsInterp, Creatine_Fit*100, linewidth = 1.5, color = '#A2142F', label = "Creatine")
-        ax.legend(fontsize = 24)
+        ax.plot(OffsetsInterp, Noe_Fit*100, linewidth=4, color='#77AC30', label="NOE")  # Increased linewidth
+        ax.plot(OffsetsInterp, Amide_Fit*100, linewidth=4, color='#7E2F8E', label="Amide")  # Increased linewidth
+        ax.plot(OffsetsInterp, Creatine_Fit*100, linewidth=4, color='#A2142F', label="Creatine")  # Increased linewidth
+        
+        ax.legend(fontsize=24)
         ax.invert_xaxis()
-        ax.set_xlabel("Offset frequency (ppm)", fontsize = 32, fontname = 'Arial')
-        ax.set_ylabel("CEST Contrast (%)", fontsize = 32, fontname = 'Arial')
+        ax.set_xlabel("Offset frequency (ppm)", fontsize=32, fontname='Arial')
+        ax.set_ylabel("CEST Contrast (%)", fontsize=32, fontname='Arial')
         ax.tick_params(axis='both', which='major', labelsize=24)
-        fig.suptitle(Segment, fontsize = 32, weight = 'bold', fontname = 'Arial')
+        fig.suptitle(Segment, fontsize=32, weight='bold', fontname='Arial')
+        
+        plt.grid(False)
         fig.savefig(Dir + "/" + Name + "_" + Segment + "_Lorentzian_Dif.svg")
         fig.savefig(Dir + "/" + Name + "_" + Segment + "_Lorentzian_Dif.tiff", dpi = 300)
         plt.close(fig)

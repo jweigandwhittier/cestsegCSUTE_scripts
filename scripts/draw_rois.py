@@ -6,7 +6,9 @@ Created on Tue Feb  6 12:56:50 2024
 @author: jonah
 """
 import roipoly
+import time
 import math
+import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
@@ -31,10 +33,11 @@ def Process_Avg(Data):
     Spectra = np.swapaxes(Spectra, 0, 1)
     return Spectra
 
-def Process_PerPixel(Data):
+def Process_PerPixel(Data, Mask):
     M0 = np.squeeze(Data['M0'])
     Imgs = Data['Cest'][0]
-    Mask = Rois_Avg(M0)
+    if Mask is None:
+        Mask = Rois_Avg(M0)
     Spectra = []
     Pixels = []
     M0[~Mask] = 1
@@ -88,6 +91,9 @@ def process_aha_thermal_drift(data, savedir, save_as):
         pixels = np.array(pixels)
         spectrum = np.mean(pixels, axis=1)
         spectra[label] = spectrum
+        np.save(savedir + '/mask.npy', mask)
+        with open(f"{savedir}/labeled_segments.pkl", "wb") as f:
+            pickle.dump(labeled_segments, f)
     return mask, labeled_segments, spectra
     
 def Rois_Avg(M0):
@@ -102,12 +108,18 @@ def Rois_Avg(M0):
     Mask = np.logical_and(Mask_Exterior, np.logical_not(Mask_Interior))
     return Mask
 
-def rois_avg_phantom(m0):
+def single_roi_avg(m0, savedir):
     fig, ax = plt.subplots(1,1)
     fig.suptitle('Draw ROIs')
     ax.imshow(m0, cmap='gray')
     ax.axis('off')
     roi = roipoly.RoiPoly(color = 'r')
+    fig, ax = plt.subplots(1,1)
+    fig.suptitle('Draw ROIs')
+    ax.imshow(m0, cmap='gray')
+    ax.axis('off')
+    roi.display_roi()
+    plt.savefig(savedir+'/roi.tiff', dpi=300)
     mask = roi.get_mask(m0)
     return mask
     
@@ -130,14 +142,14 @@ def process_thermal_drift(data):
     spectra = np.swapaxes(spectra, 0, 1)
     return spectra
 
-def process_thermal_drift_phantom(data, mask):
+def process_thermal_drift_liver(data, savedir, mask):
     m0 = np.squeeze(data['M0'])
     imgs = data['Cest'][0]
     offsets = data['Cest'][1]
     if mask is not None:
         pass
     else:
-        mask = rois_avg_phantom(m0)
+        mask = single_roi_avg(m0, savedir)
     spectra = []
     pixels = []
     for i in range(np.size(imgs, axis=2)):
@@ -168,7 +180,13 @@ def process_thermal_drift_quesp(data, mask):
     return spectra
 
 def show_segmentation(mask, rois, image, labeled_segments, savedir, save_as):
-    segmented = np.zeros((np.size(mask, 0), np.size(mask, 1), 3))
+    # Initialize an empty RGB array for the segmentation
+    segmented = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
+    # Zoom into the region based on the mask with a margin of ±20 pixels
+    y_indices, x_indices = np.where(mask)
+    x_min, x_max = max(np.min(x_indices) - 20, 0), min(np.max(x_indices) + 20, mask.shape[1])
+    y_min, y_max = max(np.min(y_indices) - 20, 0), min(np.max(y_indices) + 20, mask.shape[0])
+    # Define segment colors
     coords = {
         'Inferoseptal': (255, 0, 0),      # red       inferoseptal
         'Anteroseptal': (0, 255, 0),      # green     anteroseptal
@@ -177,28 +195,25 @@ def show_segmentation(mask, rois, image, labeled_segments, savedir, save_as):
         'Inferolateral': (255, 255, 100), # yellow    inferolateral
         'Inferior': (128, 0, 128)         # purple    inferior
     }
+    # Apply colors to each segment
     for segment, color in coords.items():
         for coord in labeled_segments[segment]:
             segmented[coord[0], coord[1]] = np.array(color, dtype=np.uint8)
-    fig, axs = plt.subplots(1, 2, figsize=(10,5))
-    axs[0].imshow(image, cmap='gray')  # Overlay grayscale image
-    # Overlay segmented regions
-    axs[0].imshow(segmented, alpha=0.5)
-    # Create legend
-    legend_elements = [Patch(facecolor=np.array(color)/255, edgecolor='black', label=label) for label, color in coords.items()]
-    axs[0].legend(handles=legend_elements, loc=4)
-    axs[1].imshow(image, cmap='gray')
-    roi_names = []
-    for name, roi in rois.rois.items():
-        roi.display_roi()
-        roi_names.append(name)
-    axs[1].legend(roi_names, loc=4)
-    for ax in axs:
-        ax.axis('off')
+    # Set up subplots for the original image and segmentation overlay
+    fig, ax = plt.subplots(1, 1, figsize=(10, 15))
+    # Display the cropped original image with segmentation overlay
+    ax.imshow(image[y_min:y_max, x_min:x_max], cmap='gray')
+    ax.imshow(segmented[y_min:y_max, x_min:x_max], alpha=0.5)
+    # Create legend for segmentation
+    legend_elements = [Patch(facecolor=np.array(color) / 255, edgecolor='black', label=label) for label, color in coords.items()]
+    ax.legend(handles=legend_elements, loc="center left", bbox_to_anchor=(1, 0.5), fontsize = 24)
+    # Remove axis labels
+    ax.axis('off')
+    # Display and save the figure
     plt.show()
     plt.pause(0.1)
-    plt.savefig(savedir + '/' + save_as + '_ROIs.svg', bbox_inches = 'tight')
-    plt.savefig(savedir + '/' + save_as + '_ROIs.png', bbox_inches = 'tight')
+    plt.savefig(f"{savedir}/{save_as}_ROIs.svg", bbox_inches='tight')
+    plt.savefig(f"{savedir}/{save_as}_ROIs.png", bbox_inches='tight')
 
 def aha_segmentation(image, savedir, save_as):
     ## Distance calculation ##
@@ -224,6 +239,8 @@ def aha_segmentation(image, savedir, save_as):
         ax.axis('off')
         ## Multi ROIs (epi, endo, insertion points) ##
         multiroi_named = roipoly.MultiRoi(roi_names=roi_list)
+        ## Start time ##
+        start = time.time()
         ## Get myocardium mask ##
         mask_epi = multiroi_named.rois['Epicardium'].get_mask(image)
         mask_endo = multiroi_named.rois['Endocardium'].get_mask(image)
@@ -280,6 +297,9 @@ def aha_segmentation(image, savedir, save_as):
         labeled_segments['Inferior'] = segmented_indices[5]
         # Show segmentation and ask for confirmation
         show_segmentation(mask, multiroi_named, image, labeled_segments, savedir, save_as)
+        end = time.time()
+        total_time = end - start
+        print(f"Time taken for segmentation: {total_time:.2f} seconds")
         while True:
             user_input = input('Are you satisfied with the segmentation? (yes/no): ').strip().lower()
             if user_input in ['yes', 'no']:
@@ -290,10 +310,11 @@ def aha_segmentation(image, savedir, save_as):
             break
     return labeled_segments, mask, multiroi_named
 
-def aha_per_pixel(data, savedir, save_as):
+def aha_per_pixel(data, mask, labeled_segments, savedir, save_as):
     m0 = np.squeeze(data['M0'])
     imgs = data['Cest'][0]
-    labeled_segments, mask, rois = aha_segmentation(m0, savedir, save_as)
+    if mask is None and labeled_segments is None:
+        labeled_segments, mask, rois = aha_segmentation(m0, savedir, save_as)
     spectra = []
     pixels = []
     for i in range(np.size(imgs, axis=2)):
@@ -305,4 +326,3 @@ def aha_per_pixel(data, savedir, save_as):
     pixels = np.swapaxes(pixels, 0, 1)
     spectra = pixels.tolist()
     return mask, labeled_segments, spectra
-    
