@@ -140,7 +140,7 @@ def process_thermal_drift(data):
     spectra.append(spectrum)
     spectra = np.array(spectra)
     spectra = np.swapaxes(spectra, 0, 1)
-    return spectra
+    return mask, spectra
 
 def process_thermal_drift_liver(data, savedir, mask):
     m0 = np.squeeze(data['M0'])
@@ -150,6 +150,7 @@ def process_thermal_drift_liver(data, savedir, mask):
         pass
     else:
         mask = single_roi_avg(m0, savedir)
+        np.save(savedir + '/mask.npy', mask)
     spectra = []
     pixels = []
     for i in range(np.size(imgs, axis=2)):
@@ -162,7 +163,7 @@ def process_thermal_drift_liver(data, savedir, mask):
     spectra.append(spectrum)
     spectra = np.array(spectra)
     spectra = np.swapaxes(spectra, 0, 1)
-    return spectra
+    return mask, spectra
 
 def process_thermal_drift_quesp(data, mask):
     imgs = data[0]
@@ -326,3 +327,23 @@ def aha_per_pixel(data, mask, labeled_segments, savedir, save_as):
     pixels = np.swapaxes(pixels, 0, 1)
     spectra = pixels.tolist()
     return mask, labeled_segments, spectra
+
+def per_pixel(data, mask, savedir, save_as):
+    m0 = np.squeeze(data['M0'])
+    imgs = data['Cest'][0]
+    if mask is not None:
+        pass
+    else:
+        mask = single_roi_avg(m0, savedir)
+        np.save(savedir + '/mask.npy', mask)
+    spectra = []
+    pixels = []
+    for i in range(np.size(imgs, axis=2)):
+        image = imgs[:,:,i]
+        image[~mask] = 0 
+        image = image.flatten()[image.flatten() != 0]
+        pixels.append(image)
+    pixels = np.array(pixels)
+    pixels = np.swapaxes(pixels, 0, 1)
+    spectra = pixels.tolist()
+    return mask, spectra

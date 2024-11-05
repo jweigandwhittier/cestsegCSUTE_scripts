@@ -11,7 +11,9 @@ import pandas as pd
 import seaborn as sns
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-def plot_wassr(pixelwise, proc_data, mask, labeled_segments, savedir, save_as):
+def plot_wassr_aha(pixelwise, proc_data, mask, labeled_segments, savedir, save_as):
+    # Save B0 map
+    np.save(savedir + '/wassr.npy', pixelwise)
     # Create B0 map
     b0_image = np.zeros_like(mask, dtype=float)
     for i in range(len(mask)):
@@ -22,23 +24,13 @@ def plot_wassr(pixelwise, proc_data, mask, labeled_segments, savedir, save_as):
     transparent_b0 = np.ma.masked_where(b0_image == 0, b0_image)
     # Zoom into the region based on the mask with a margin of ±20 pixels
     y_indices, x_indices = np.where(mask)
-    x_min, x_max = np.min(x_indices) - 20, np.max(x_indices) + 20
-    y_min, y_max = np.min(y_indices) - 20, np.max(y_indices) + 20
-
-    # Clip the indices to stay within the image bounds
-    x_min = max(0, x_min)
-    x_max = min(b0_image.shape[1], x_max)
-    y_min = max(0, y_min)
-    y_max = min(b0_image.shape[0], y_max)
+    x_min, x_max = max(np.min(x_indices) - 20, 0), min(np.max(x_indices) + 20, mask.shape[1])
+    y_min, y_max = max(np.min(y_indices) - 20, 0), min(np.max(y_indices) + 20, mask.shape[0])
 
     # Plot 1: B0 Map
     fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-    ax.imshow(proc_data['M0'], cmap='gray', extent=[0, b0_image.shape[1], b0_image.shape[0], 0])
-    im = ax.imshow(transparent_b0, cmap='plasma', alpha=0.7, extent=[0, b0_image.shape[1], b0_image.shape[0], 0])
-
-    # Set the zoom window
-    ax.set_xlim([x_min, x_max])
-    ax.set_ylim([y_max, y_min])  # Flip y-axis to match image orientation
+    ax.imshow(proc_data['M0'][y_min:y_max,x_min:x_max], cmap='gray')
+    im = ax.imshow(transparent_b0[y_min:y_max,x_min:x_max], cmap='plasma', alpha=0.7)
 
     # Title and colorbar
     ax.set_title('$B_0$ Map', fontsize=22, fontname='Arial', weight='bold')
@@ -96,3 +88,39 @@ def plot_wassr(pixelwise, proc_data, mask, labeled_segments, savedir, save_as):
 
     # Save the plot
     plt.savefig(f'{savedir}/B0_boxplot_seaborn.tif', dpi=300)
+    
+def plot_wassr(pixelwise, proc_data, mask, savedir, save_as):
+    # Save B0 map
+    np.save(savedir + '/wassr.npy', pixelwise)
+    # Create B0 map
+    b0_image = np.zeros_like(mask, dtype=float)
+    for i in range(len(mask)):
+        for j in range(len(mask[0])):
+            if mask[i][j]:
+                b0_image[i][j] = pixelwise.pop(0)
+    # Set zero values to be fully transparent
+    transparent_b0 = np.ma.masked_where(b0_image == 0, b0_image)
+    # Zoom into the region based on the mask with a margin of ±20 pixels
+    y_indices, x_indices = np.where(mask)
+    x_min, x_max = max(np.min(x_indices) - 20, 0), min(np.max(x_indices) + 20, mask.shape[1])
+    y_min, y_max = max(np.min(y_indices) - 20, 0), min(np.max(y_indices) + 20, mask.shape[0])
+
+    # Plot 1: B0 Map
+    fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+    ax.imshow(proc_data['M0'][y_min:y_max,x_min:x_max], cmap='gray')
+    im = ax.imshow(transparent_b0[y_min:y_max,x_min:x_max], cmap='plasma', alpha=0.7)
+
+    # Title and colorbar
+    ax.set_title('$B_0$ Map', fontsize=22, fontname='Arial', weight='bold')
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.ax.tick_params(labelsize=18)
+    cbar.set_label('$B_0$ Shift (ppm)', fontsize=18)
+
+    ax.axis('off')
+
+    # Save and show the B0 map
+    plt.tight_layout()
+    plt.show()
+    plt.savefig(f'{savedir}/B0_map.tif', dpi=300)
