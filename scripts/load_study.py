@@ -7,6 +7,7 @@ Created on Tue Feb  6 11:44:38 2024
 """
 import os
 import sys
+import time
 
 if 'BART_TOOLBOX_PATH' in os.environ and os.path.exists(os.environ['BART_TOOLBOX_PATH']):
 	sys.path.append(os.path.join(os.environ['BART_TOOLBOX_PATH'], 'python'))
@@ -51,42 +52,87 @@ def load_study_bruker(exp_list, directory, segmented):
     
 def load_quesp(exp_list, directory):
     data = {}
-    for exp, nums in exp_list.items():
-        if exp == 'T1':
-            load = bruker.ReadExperiment(directory, nums[0])
-            img = load.proc_data
-            inversion_times = load.method["MultiRepTime"]
-            data[exp] = img, inversion_times
+    for exp, num in exp_list.items():
         if exp == 'Quesp':
-            quesp = {}
+            data = {}
             sat = {}
-            for num in nums:
-                load = bruker.ReadExperiment(directory, num)
-                img = load.proc_data
-                if 'PV-360' not in load.acqp['ACQ_sw_version']:
-                    b1 = load.method['RF_Amplitude']
-                    offsets = np.round(load.method["Cest_Offsets"]/load.method["PVM_FrqWork"][0],1)
-                    quesp[b1] = img, offsets
+            load = bruker.ReadExperiment(directory, num)
+            traj = load.traj
+            ksp = load.GenerateKspace()
+            if 'PV-360' not in load.acqp['ACQ_sw_version']:
+                b1_values = load.method['RF_Amplitude']
+                offsets = np.round(load.method["Cest_Offsets"] / load.method["PVM_FrqWork"][0], 1)
+                num_offsets = len(offsets)
+                # Loop over each B1 value
+                for b1_idx, b1 in enumerate(b1_values):
+                    data[b1] = {}
+                    ref = None
+                    # Identify the high offset image first
+                    for offset_idx, offset in enumerate(offsets):
+                        # Image slice for the specific B1 and offset
+                        ksp_slice = ksp[:, :, :, b1_idx * num_offsets + offset_idx]
+                        ksp_slice = np.expand_dims(ksp_slice, axis=0)
+                        img_slice = bart(1, 'nufft -i', traj, ksp_slice)
+                        img_slice = bart(1, 'rss 8', img_slice)
+                        img_slice = np.abs(img_slice)
+                        if b1_idx == 0 and offset_idx == 0:
+                            satisfied = False
+                            while not satisfied:
+                                # Display the image and ensure it renders before the input prompt
+                                fig, ax = plt.subplots(1, 1)
+                                ax.imshow(img_slice, cmap='gray')
+                                ax.axis('off')
+                                fig.suptitle('Input number of rotations.')
+                                plt.show(block=False)
+                                plt.pause(0.1)  # Allow the plot to render
+                                # Input validation for number of rotations
+                                while True:
+                                    try:
+                                        num_rot = int(input('Enter the number of 90-degree counterclockwise rotations to align ventral (top) to dorsal (bottom) (0-3): '))
+                                        if num_rot in range(4):
+                                            break
+                                        else:
+                                            print("Please enter an integer between 0 and 3.")
+                                    except ValueError:
+                                        print("Invalid input. Please enter an integer between 0 and 3.")
+                                # Rotate the images
+                                plt.close(fig)
+                                img_slice = np.rot90(img_slice, k=num_rot, axes=(0, 1))
+                                # Display the rotated image for confirmation
+                                fig, ax = plt.subplots(1, 1)
+                                ax.imshow(img_slice, cmap='gray')
+                                ax.axis('off')
+                                fig.suptitle('Is this rotation correct? (yes/no)')
+                                plt.show(block=False)
+                                plt.pause(0.1)  # Allow the plot to render
+                                while True:
+                                    user_input = input('Is this rotation correct? (yes/no): ').strip().lower()
+                                    if user_input in ['yes', 'no']:
+                                        satisfied = (user_input == 'yes')
+                                        break
+                                    else:
+                                        print("Please enter 'yes' or 'no'.")
+                                plt.close(fig)
+                        else:
+                            img_slice = np.rot90(img_slice, k=num_rot)
+                        if offset > 15:
+                            ref = img_slice
+                        else:
+                            # Only store the image if it is not the high offset image
+                            if ref is not None:
+                                img_slice = img_slice / ref  # Divide by high offset image
+                            data[b1][offset] = img_slice  # Store the modified image
+                    # Saturation parameters
                     sat['num_pulses'] = load.method["PVM_MagTransPulsNumb"]
-                    sat['pulse_length'] = load.method["PVM_MagTransPulse1"][0]*10**-3
-                    sat['pulse_delay'] = load.method["PVM_MagTransInterDelay"]*10**-3
-                    sat['dc'] = sat['pulse_length']/(sat['pulse_length']+sat['pulse_delay'])
-                    sat['tp'] = sat['pulse_length']*sat['num_pulses']/sat['dc']
-                else:
-                    b1 = load.method['PVM_SatTransPulseAmpl_uT']
-                    offsets = load.method['PVM_SatTransFreqValues']
-                    quesp[b1] = img, offsets
-                    sat['num_pulses'] = load.method["PVM_SatTransNPulses"]
-                    sat['pulse_length'] = load.method["PVM_StP0"]*10**-6
-                    sat['pulse_delay'] = load.method["PVM_SatTransInterPulseDelay"]*10**-3
-                    sat['dc'] = sat['pulse_length']/(sat['pulse_length']+sat['pulse_delay'])
-                    sat['tp_cw'] = sat['pulse_length']*sat['num_pulses']/sat['dc']
-                    
-            data[exp] = quesp
+                    sat['pulse_length'] = load.method["PVM_MagTransPulse1"][0] * 10**-3
+                    sat['pulse_delay'] = load.method["PVM_MagTransInterDelay"] * 10**-3
+                    sat['dc'] = sat['pulse_length'] / (sat['pulse_length'] + sat['pulse_delay'])
+                    sat['tp'] = sat['pulse_length'] * sat['num_pulses'] / sat['dc']
     return sat, data
                 
     
 def load_study_bart(exps, directory, undersample, segmented):
+    start = time.time()
     study = {}
     exps = bulk_load(exps, directory)
     for exp, data in exps.items():
@@ -109,6 +155,9 @@ def load_study_bart(exps, directory, undersample, segmented):
             img = np.abs(img)
             imgs.append(img)
         imgs = np.stack(imgs, axis=2)
+        end = time.time()
+        load_time = end - start
+        print(f"Time taken for image reconstruction: {load_time:.2f} seconds")
         satisfied = False
         while not satisfied:
             # Display the image and ensure it renders before the input prompt
