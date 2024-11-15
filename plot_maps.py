@@ -7,27 +7,34 @@ Created on Tue Jun 18 17:26:46 2024
 """
 from scripts import load_study, draw_rois, cest_fitting, misc
 import numpy as np
+import time
 import matplotlib.pyplot as plt
 from scipy.signal import medfilt2d
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-main_dir = '/Users/jonah/Documents/MRI_Data/Berkeley/HCM/'
-animal_id = '20240814_131736_M1916_1_1'
+main_dir = '/Users/jonah/Documents/MRI_Data/Berkeley/Manuscript_Data/'
+animal_id = '20240415_181720_C57BL6F3_1_5'
 directory = main_dir + animal_id
-exp = {'Cest': 10}
+exp = {'Cest': 12}
 
 undersample = None
+
+mask = None #Optionally, add path for loading mask from previous analysis
 
 save_as = 'contrast_map'
 savedir = directory + '/Data/' + save_as
 
-x_start, x_end = 70, 150
-y_start, y_end = 34, 114
-
 data = load_study.load_study_bart(exp, directory, undersample, False)
 proc_data = load_study.thermal_drift(data)
-spectra, mask = draw_rois.Process_PerPixel(proc_data)
+
+start = time.time()
+
+spectra, mask = draw_rois.Process_PerPixel(proc_data, mask)
 pixelwise = cest_fitting.per_pixel(proc_data['Cest'][1], spectra)
+
+y_indices, x_indices = np.where(mask)
+x_min, x_max = max(np.min(x_indices) - 20, 0), min(np.max(x_indices) + 20, mask.shape[1])
+y_min, y_max = max(np.min(y_indices) - 20, 0), min(np.max(y_indices) + 20, mask.shape[0])
 
 mt_list = []
 amide_list = []
@@ -38,10 +45,11 @@ for i in range(len(pixelwise)):
     amide_list.append(pixelwise[i][1]['Amide'])
     creatine_list.append(pixelwise[i][1]['Creatine'])
 
-# Initialize images with zeros
-mt_image = np.zeros_like(mask, dtype=float)
-amide_image = np.zeros_like(mask, dtype=float)
-creatine_image = np.zeros_like(mask, dtype=float)
+# Initialize images with NaNs
+mt_image = np.full_like(mask, np.nan, dtype=float)
+amide_image = np.full_like(mask, np.nan, dtype=float)
+creatine_image = np.full_like(mask, np.nan, dtype=float)
+
 
 # Fill images with values from the lists
 for i in range(len(mask)):
@@ -63,8 +71,8 @@ images = [mt_image, amide_image, creatine_image]
 titles = ['MT', 'Amide', 'Creatine']
 
 for i, (ax, img, title) in enumerate(zip(axs, images, titles)):
-    ax.imshow(image[y_start:y_end,x_start:x_end], cmap='gray')
-    im = ax.imshow(img[y_start:y_end,x_start:x_end], cmap='magma', alpha=0.7)
+    ax.imshow(image[y_min:y_max,x_min:x_max], cmap='gray')
+    im = ax.imshow(img[y_min:y_max,x_min:x_max], cmap='magma', alpha=0.7)
     ax.set_title(title, fontsize = 22)
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
@@ -77,3 +85,7 @@ for i, (ax, img, title) in enumerate(zip(axs, images, titles)):
 plt.tight_layout()
 plt.show()
 plt.savefig('cest_maps.tif', dpi=300)
+
+end = time.time()
+total_time = end - start
+print(f"Time taken for pixelwise mapping: {total_time:.2f} seconds")
