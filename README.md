@@ -30,6 +30,8 @@ Detailed instructions can be found in the instructions folder.
 ## References
 Martin Uecker, Frank Ong, Jonathan I Tamir, Dara Bahri, Patrick Virtue, Joseph Y Cheng, Tao Zhang, and Michael Lustig. Berkeley Advanced Reconstruction Toolbox. Annual Meeting ISMRM, Toronto 2015, In Proc. Intl. Soc. Mag. Reson. Med. 23:2486 
 
+### This repository is associate with the following paper, please cite this work when using the code published in this repository:
 
+Weigand-Whittier J, Wendland M, Lam B, et al. Ungated, plug-and-play cardiac CEST-MRI using radial FLASH with segmented saturation. Magn Reson Med. 2024. 10.1002/mrm.30382
 
 
